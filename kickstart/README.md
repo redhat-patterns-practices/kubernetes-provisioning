@@ -14,3 +14,9 @@ chmod u+x ks-http.sh
 ```
  ./ks-http.sh
 ```
+
+- Boot virtual box vm and press tab on boot up screen.
+
+```
+inst.ks=http:\\<localipaddress>\ks-min.cfg
+```
