@@ -1,0 +1,74 @@
+{
+  "variables": {
+    "redhat_username": "{{env `redhat_username`}}",
+    "redhat_password": "{{env `redhat_password`}}",
+    "kickstart": "ks-min.cfg",
+    "machine_hostname":"kbase5",
+    "home": "{{env `HOME`}}"
+  },
+  "builders":[
+    {
+      "type": "virtualbox-iso",
+
+      "iso_url": "{{pwd}}/input/iso/rhel-server-7.2-x86_64-dvd.iso",
+      "iso_checksum": "03f3a0291634335f6995534d829bd21ffaa0d000004dfeb1b2fb81052d64a4d5",
+      "iso_checksum_type": "none",
+
+      "ssh_username": "root",
+      "ssh_password": "password",
+      "ssh_timeout": "30m",
+
+      "vm_name":"packer-rhel72-base",
+      "guest_os_type": "RedHat_64",
+      "disk_size":"10000",
+
+      "http_directory":"{{pwd}}/input/kickstart",
+      "output_directory": "{{pwd}}/output/{{user `machine_hostname`}}",
+      "vm_name": "packer-{{user `machine_hostname`}}",
+
+
+      "vboxmanage": [
+        ["modifyvm", "{{.Name}}", "--memory", "1024"],
+        ["modifyvm", "{{.Name}}", "--cpus", "1"],
+        ["modifyvm", "{{.Name}}", "--nic1", "nat","--nictype1","82540EM"],
+        ["modifyvm", "{{.Name}}", "--nic2", "hostonly","--nictype2","82540EM" ,"--hostonlyadapter2","vboxnet0"],
+        ["modifyvm", "{{.Name}}", "--nic3", "natnetwork","--nictype3","82540EM" ,"--nat-network3","custom-nat-network"]
+
+      ],
+      "vboxmanage_post":[
+
+      ],
+      "boot_command":[
+        "<wait><esc><esc>",
+        "linux ks=http://{{.HTTPIP}}:{{.HTTPPort}}/{{user `kickstart`}} <enter>"
+      ],
+      "boot_wait":"5s",
+
+      "shutdown_command": "shutdown -P now",
+      "shutdown_timeout": "30m",
+
+      "guest_additions_mode":"disable"
+
+    }
+  ],
+  "provisioners": [{
+    "type": "shell",
+    "execute_command": "sh '{{ .Path }}'",
+    "inline": [
+      "hostnamectl set-hostname {{user `machine_hostname`}}",
+      "/usr/sbin/subscription-manager register --username=\"{{user `redhat_username`}}\" --password=\"{{user `redhat_password`}}\" --auto-attach",
+      "/usr/sbin/subscription-manager repos --enable=rhel-7-server-extras-rpms",
+      "/usr/sbin/subscription-manager repos --enable=rhel-7-server-optional-rpms",
+      "yum install -y docker",
+      "yum install -y kubernetes",
+      "yum install -y etcd",
+      "yum install -y flannel",
+      "yum clean packages",
+      "systemctl enable docker.service",
+      "# systemctl start docker.service"
+
+    ]
+
+
+  }]
+}
