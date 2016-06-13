@@ -1,9 +1,11 @@
 {
   "variables": {
-    "redhat_username": "{{env `redhat_username`}}",
-    "redhat_password": "{{env `redhat_password`}}",
+    "redhat_username":"{{env `redhat_username`}}",
+    "redhat_password":"{{env `redhat_password`}}",
+    "network_hostonly_name":"vboxnet0",
+    "network_natnetwork_name":"custom-nat-network",
     "kickstart": "ks-min.cfg",
-    "machine_hostname":"kbase5",
+    "vm_name":"rhel-server-72",
     "home": "{{env `HOME`}}"
   },
   "builders":[
@@ -14,61 +16,164 @@
       "iso_checksum": "03f3a0291634335f6995534d829bd21ffaa0d000004dfeb1b2fb81052d64a4d5",
       "iso_checksum_type": "none",
 
+      "headless":"false",
+
       "ssh_username": "root",
       "ssh_password": "password",
       "ssh_timeout": "30m",
 
-      "vm_name":"packer-rhel72-base",
       "guest_os_type": "RedHat_64",
       "disk_size":"10000",
 
       "http_directory":"{{pwd}}/input/kickstart",
-      "output_directory": "{{pwd}}/output/{{user `machine_hostname`}}",
-      "vm_name": "packer-{{user `machine_hostname`}}",
+      "output_directory": "{{pwd}}/output/virtualbox/{{user `vm_name`}}",
+      "vm_name": "{{user `vm_name`}}",
 
 
       "vboxmanage": [
-        ["modifyvm", "{{.Name}}", "--memory", "1024"],
+        ["modifyvm", "{{.Name}}", "--memory", "512"],
         ["modifyvm", "{{.Name}}", "--cpus", "1"],
         ["modifyvm", "{{.Name}}", "--nic1", "nat","--nictype1","82540EM"],
-        ["modifyvm", "{{.Name}}", "--nic2", "hostonly","--nictype2","82540EM" ,"--hostonlyadapter2","vboxnet0"],
-        ["modifyvm", "{{.Name}}", "--nic3", "natnetwork","--nictype3","82540EM" ,"--nat-network3","custom-nat-network"]
+        ["modifyvm", "{{.Name}}", "--nic2", "hostonly","--nictype2","82540EM" ,"--hostonlyadapter2","{{user `network_hostonly_name`}}"],
+        ["modifyvm", "{{.Name}}", "--nic3", "natnetwork","--nictype3","82540EM" ,"--nat-network3","{{user `network_natnetwork_name`}}"]
 
       ],
       "vboxmanage_post":[
 
       ],
       "boot_command":[
-        "<wait><esc><esc>",
-        "linux ks=http://{{.HTTPIP}}:{{.HTTPPort}}/{{user `kickstart`}} <enter>"
+        "<tab> text inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/{{user `kickstart`}} <enter><wait>"
       ],
       "boot_wait":"5s",
 
       "shutdown_command": "shutdown -P now",
       "shutdown_timeout": "30m",
 
-      "guest_additions_mode":"disable"
+      "guest_additions_mode":"upload"
+      "guest_additions_path": "{{pwd}}/input/iso/VBoxGuestAdditions_{{.Version}}.iso",
+      "virtualbox_version_file": ".vbox_version"
 
     }
-  ],
-  "provisioners": [{
+  ]
+  ,
+  "provisioners": [
+    {
     "type": "shell",
     "execute_command": "sh '{{ .Path }}'",
     "inline": [
-      "hostnamectl set-hostname {{user `machine_hostname`}}",
+      "echo Setting host name to {{user `vm_name`}}",
+      "hostnamectl set-hostname {{user `vm_name`}}",
       "/usr/sbin/subscription-manager register --username=\"{{user `redhat_username`}}\" --password=\"{{user `redhat_password`}}\" --auto-attach",
+      "echo Enabling red hat repo for docker kubernetes flannel etcd and other server optionals...",
       "/usr/sbin/subscription-manager repos --enable=rhel-7-server-extras-rpms",
+      "echo Enabling red hat repo for several developer packages...",
       "/usr/sbin/subscription-manager repos --enable=rhel-7-server-optional-rpms",
-      "yum install -y docker",
-      "yum install -y kubernetes",
-      "yum install -y etcd",
-      "yum install -y flannel",
-      "yum clean packages",
-      "systemctl enable docker.service",
+      "echo Enabling red hat repo for software collections and developer toolset...",
+      "/usr/sbin/subscription-manager repos --enable rhel-server-rhscl-7-rpms",
+      "echo Installing nmap tool...",
+      "yum install -y nmap",
+      "echo Installing ifconfig tool...",
+      "yum install -y net-tools",
+      "echo Installing wget tool...",
+      "yum install -y wget",
+      "# yum install -y docker",
+      "# yum install -y kubernetes",
+      "# yum install -y etcd",
+      "# yum install -y flannel",
+      "# yum install -y ntp",
+      "# systemctl enable ntp",
+      "# yum clean packages",
+      "# systemctl enable docker.service",
       "# systemctl start docker.service"
-
     ]
-
-
-  }]
+  }
+  ,
+  {
+    "type": "shell",
+    "execute_command": "sh '{{ .Path }}'",
+    "inline": [
+      "echo Updating the kernel from $(uname -r) to the latest...",
+      "yum update -y kernel*",
+      "history -c",
+      "reboot",
+      "sleep 60"
+    ]
+  }
+  ,
+  {
+    "type": "shell",
+    "only": ["virtualbox-iso"],
+    "pause_before": "10s",
+    "execute_command": "sh '{{ .Path }}'",
+    "inline": [
+      "echo Kernel updated to $(uname -r).",
+      "echo Installing kernel development headers and tools ...",
+      "yum install -y gcc bzip2 kernel-devel",
+      "mkdir vboxiso",
+      "echo Mounting VBoxGuestAdditions.iso ...",
+      "mount -t iso9660 -o loop ./VBoxGuestAdditions.iso ./vboxiso",
+      "echo Installing vbox guest additions ...",
+      "./vboxiso/VBoxLinuxAdditions.run",
+      "echo Vbox guest additions install complete",
+      "rm VBoxGuestAdditions.iso -f",
+      "umount ./vboxiso",
+      "rm vboxiso -d ",
+      "yum clean all",
+      "history -c"
+    ]
+  }
+  ,
+  {
+    "type": "shell",
+    "only": ["virtualbox-iso"],
+    "execute_command": "sh '{{ .Path }}'",
+    "inline": [
+      "printf \"***Configuring vagrant user settings...***\\n\"",
+      "echo 1. \\) Creating the vagrant user ...",
+      "useradd -m -s /bin/bash vagrant",
+      "echo 2. \\) Setting the vagrant user password to \"vagrant\" ",
+      "echo vagrant:vagrant | chpasswd",
+      "echo 3. \\) Creating the vagrant user ~/.ssh folder...",
+      "mkdir -m 700 -p /home/vagrant/.ssh",
+      "echo 4. \\) Downloading default ssh keys for vagrant user...",
+      "curl –O https://raw.githubusercontent.com/mitchellh/vagrant/master/keys/vagrant >> /home/vagrant/.ssh/vagrant",
+      "curl –O https://raw.githubusercontent.com/mitchellh/vagrant/master/keys/vagrant.pub >> /home/vagrant/.ssh/vagrant.pub",
+      "curl –O https://raw.githubusercontent.com/mitchellh/vagrant/master/keys/vagrant.pub >> /home/vagrant/.ssh/authorized_keys",
+      "echo 5. \\) Setting read write permissions on ssh authorized keys file...",
+      "chmod 600 /home/vagrant/.ssh/authorized_keys",
+      "echo 6. \\) Changing .ssh ownership to vagrant user ...",
+      "chown -R vagrant:vagrant /home/vagrant/.ssh",
+      "echo 7. \\) Allowing vagrant user to use \"sudo\" without requiring a password...",
+      "echo \"vagrant ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers",
+      "printf \" 8. ) Configuring sudo policy for vagrant user to to prevent the following sudo error: sorry, you must have a tty to run sudo.\\n\"",
+      "echo \"Defaults:vagrant !requiretty\" >> /etc/sudoers",
+      "printf \"9. )$(visudo -c)\\n\"",
+      "echo 10. \\) Setting /etc/ssh/sshd_config PermitRootLogin settings for ssh...",
+      "sed -i 's/^PermitRootLogin without-password/PermitRootLogin yes/' /etc/ssh/sshd_config",
+      "echo 11.\\) Make ssh logins quicker...",
+      "/bin/echo 'UseDNS no' >> /etc/ssh/sshd_config",
+      "echo Clearing out tmp files...",
+      "rm -rf /tmp/*",
+      "echo Clearing out log files...",
+      "rm -rf /var/log/*",
+      "echo Clearing history...",
+      "history -c"
+    ]
+  }
+],
+"post-processors": [
+  {
+    "type": "compress",
+    "keep_input_artifact": true
+  }
+  ,
+  {
+      "type": "vagrant",
+      "override": {
+        "virtualbox": {
+          "output": "{{pwd}}/output/virtualbox/{{user `vm_name`}}/vagrant/{{user `vm_name`}}.box"
+        }
+      }
+    }
+  ]
 }
